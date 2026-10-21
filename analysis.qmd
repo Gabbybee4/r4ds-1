@@ -18,90 +18,82 @@ billboard <- read_csv("data/billboard.csv")
 ```
 
 ```{r}
-billboard_long <- billboard |>
+billboard_longer <- billboard |>
+  mutate(song = str_c(artist, " - ", track)) |>
   pivot_longer(
     cols = starts_with("wk"),
     names_to = "week",
     values_to = "rank"
   ) |>
-  mutate(week = readr::parse_number(week))
+  mutate(week = parse_number(week))
 
-song_summary <- billboard_long |>
+billboard_song_summary <- billboard_longer |>
   filter(!is.na(rank)) |>
-  group_by(artist, track) |>
-  summarize(
-    first_rank = first(rank),
+  group_by(artist, track, song) |>
+  summarise(
     best_rank = min(rank),
-    first_week_at_best = min(week[rank == min(rank)]),
+    first_best_week = min(week[rank == best_rank]),
     weeks_on_chart = n(),
     .groups = "drop"
   )
-```
 
-```{r}
-top10_songs <- song_summary |>
-  filter(best_rank <= 10)
+billboard_top10_stories <- bind_rows(
+  billboard_song_summary |>
+    filter(best_rank == 1) |>
+    slice_min(first_best_week, n = 1, with_ties = FALSE) |>
+    mutate(story = "Fastest to #1"),
+  billboard_song_summary |>
+    filter(best_rank == 1) |>
+    slice_max(first_best_week, n = 1, with_ties = FALSE) |>
+    mutate(story = "Slowest to #1"),
+  billboard_song_summary |>
+    filter(best_rank <= 10) |>
+    slice_max(weeks_on_chart, n = 1, with_ties = FALSE) |>
+    mutate(story = "Longest top-10 run")
+)
 
-fastest_to_number_one <- top10_songs |>
-  filter(best_rank == 1) |>
-  slice_min(first_week_at_best, n = 1, with_ties = FALSE)
-
-slowest_to_number_one <- top10_songs |>
-  filter(best_rank == 1) |>
-  slice_max(first_week_at_best, n = 1, with_ties = FALSE)
-
-longest_chart_run <- top10_songs |>
-  slice_max(weeks_on_chart, n = 1, with_ties = FALSE)
-```
-
-```{r}
-notable_songs <- bind_rows(
-  fastest_to_number_one |> mutate(category = "Fastest to #1"),
-  slowest_to_number_one |> mutate(category = "Slowest to #1"),
-  longest_chart_run |> mutate(category = "Longest chart run")
-) |>
-  distinct(artist, track, .keep_all = TRUE)
-
-top10_trajectories <- billboard_long |>
-  semi_join(top10_songs, by = c("artist", "track")) |>
-  left_join(
-    notable_songs |> select(artist, track, category),
-    by = c("artist", "track")
-  ) |>
-  mutate(
-    highlight = if_else(is.na(category), "Other top-10 songs", category)
+billboard_top10_longer <- billboard_longer |>
+  semi_join(
+    billboard_song_summary |> filter(best_rank <= 10),
+    by = c("artist", "track", "song")
   )
 
-ggplot() +
+billboard_top10_longer |>
+  filter(!is.na(rank)) |>
+  ggplot(aes(x = week, y = rank, group = song)) +
+  geom_line(color = "gray75", alpha = 0.35) +
   geom_line(
-    data = filter(top10_trajectories, highlight == "Other top-10 songs"),
-    aes(x = week, y = rank, group = interaction(artist, track)),
-    color = "gray70",
-    alpha = 0.5
-  ) +
-  geom_line(
-    data = filter(top10_trajectories, highlight != "Other top-10 songs"),
-    aes(
-      x = week,
-      y = rank,
-      group = interaction(artist, track),
-      color = highlight
-    ),
+    data = billboard_top10_longer |>
+      semi_join(billboard_top10_stories, by = c("artist", "track", "song")) |>
+      filter(!is.na(rank)),
+    aes(color = song),
     linewidth = 1
   ) +
+  geom_point(
+    data = billboard_top10_stories,
+    aes(x = first_best_week, y = best_rank, color = song),
+    size = 2
+  ) +
+  geom_text(
+    data = billboard_top10_stories,
+    aes(
+      x = first_best_week,
+      y = best_rank,
+      label = story,
+      color = song
+    ),
+    hjust = -0.05,
+    vjust = -0.5,
+    size = 2.8,
+    show.legend = FALSE
+  ) +
   scale_y_reverse() +
-  scale_color_manual(
-    name = "Notable songs",
-    values = c(
-      "Fastest to #1" = "blue",
-      "Slowest to #1" = "red",
-      "Longest chart run" = "darkgreen"
-    )
-  ) +
   labs(
-    x = "Week",
-    y = "Billboard ranking",
-    title = "Chart Trajectories of Top-10 Songs"
-  ) +
-  theme_minimal()
+    title = "Top-10 hits follow different chart paths",
+    subtitle = "Each line is one song that reached the top 10 of the Billboard Hot 100",
+    x = "Weeks since entering the chart",
+    y = "Billboard rank",
+    color = "Song",
+    caption = "Source: tidyr::billboard"
+  )
 ```
