@@ -2,4 +2,106 @@
 title: "Billboard Hot 100"
 format: html
 ---
+execute:
+  echo: false
 
+```{r}
+#| message: false
+library(tidyverse)
+```
+
+
+```{r}
+#| cache: true
+#| message: false
+billboard <- read_csv("data/billboard.csv")
+```
+
+```{r}
+billboard_long <- billboard |>
+  pivot_longer(
+    cols = starts_with("wk"),
+    names_to = "week",
+    values_to = "rank"
+  ) |>
+  mutate(week = readr::parse_number(week))
+
+song_summary <- billboard_long |>
+  filter(!is.na(rank)) |>
+  group_by(artist, track) |>
+  summarize(
+    first_rank = first(rank),
+    best_rank = min(rank),
+    first_week_at_best = min(week[rank == min(rank)]),
+    weeks_on_chart = n(),
+    .groups = "drop"
+  )
+```
+
+```{r}
+top10_songs <- song_summary |>
+  filter(best_rank <= 10)
+
+fastest_to_number_one <- top10_songs |>
+  filter(best_rank == 1) |>
+  slice_min(first_week_at_best, n = 1, with_ties = FALSE)
+
+slowest_to_number_one <- top10_songs |>
+  filter(best_rank == 1) |>
+  slice_max(first_week_at_best, n = 1, with_ties = FALSE)
+
+longest_chart_run <- top10_songs |>
+  slice_max(weeks_on_chart, n = 1, with_ties = FALSE)
+```
+
+```{r}
+notable_songs <- bind_rows(
+  fastest_to_number_one |> mutate(category = "Fastest to #1"),
+  slowest_to_number_one |> mutate(category = "Slowest to #1"),
+  longest_chart_run |> mutate(category = "Longest chart run")
+) |>
+  distinct(artist, track, .keep_all = TRUE)
+
+top10_trajectories <- billboard_long |>
+  semi_join(top10_songs, by = c("artist", "track")) |>
+  left_join(
+    notable_songs |> select(artist, track, category),
+    by = c("artist", "track")
+  ) |>
+  mutate(
+    highlight = if_else(is.na(category), "Other top-10 songs", category)
+  )
+
+ggplot() +
+  geom_line(
+    data = filter(top10_trajectories, highlight == "Other top-10 songs"),
+    aes(x = week, y = rank, group = interaction(artist, track)),
+    color = "gray70",
+    alpha = 0.5
+  ) +
+  geom_line(
+    data = filter(top10_trajectories, highlight != "Other top-10 songs"),
+    aes(
+      x = week,
+      y = rank,
+      group = interaction(artist, track),
+      color = highlight
+    ),
+    linewidth = 1
+  ) +
+  scale_y_reverse() +
+  scale_color_manual(
+    name = "Notable songs",
+    values = c(
+      "Fastest to #1" = "blue",
+      "Slowest to #1" = "red",
+      "Longest chart run" = "darkgreen"
+    )
+  ) +
+  labs(
+    x = "Week",
+    y = "Billboard ranking",
+    title = "Chart Trajectories of Top-10 Songs"
+  ) +
+  theme_minimal()
+```
